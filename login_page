@@ -16,9 +16,9 @@ class MyGame(arcade.Window):
         self.setup()
 
     def setup(self):
-        self.background_texture = arcade.load_texture("photo_2026-01-07_21-47-51.jpg")
-        texture_normal = arcade.load_texture("125.png")
-        texture_hovered = arcade.load_texture("126.png")
+        self.background_texture = arcade.load_texture("backgrounds/photo_2026-01-07_21-47-51.jpg")
+        texture_normal = arcade.load_texture("backgrounds/125.png")
+        texture_hovered = arcade.load_texture("backgrounds/126.png")
         start_button = UITextureButton(
             texture=texture_normal,
             texture_hovered=texture_hovered,
