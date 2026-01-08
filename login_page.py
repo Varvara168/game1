@@ -8,7 +8,7 @@ class MyGame(arcade.Window):
     def __init__(self):
         # Используем фиксированный размер окна для простоты примера,
         # или можно оставить fullscreen=True
-        super().__init__(800, 600, "Game Example", resizable=True, fullscreen=True)
+        super().__init__(800, 600, "Game Example",  fullscreen=True)
 
         self.background_texture = None
         self.manager = UIManager()
@@ -22,7 +22,7 @@ class MyGame(arcade.Window):
         start_button = UITextureButton(
             texture=texture_normal,
             texture_hovered=texture_hovered,
-            width=350,
+            width=350, 
             height=105,
         )
 
