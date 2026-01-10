@@ -1,1522 +1,221 @@
 import sqlite3
-
 import arcade
 import arcade.gui
 from arcade.gui import UIManager, UITextureButton
 from arcade.gui.widgets.layout import UIAnchorLayout
+from pathlib import Path
+
+
+
+BASE_DIR = Path(__file__).resolve().parent
+BG_DIR = BASE_DIR / "images" / "backgrounds"
+CHAR_DIR = BASE_DIR / "character"
 
 
 def get_value():
-    conn = sqlite3.connect('bd/LVL_NUM.db')
+    conn = sqlite3.connect(BASE_DIR / "bd" / "LVL_NUM.db")
     cursor = conn.cursor()
-    query = f"SELECT Number FROM LVL"
-    cursor.execute(query)
+    cursor.execute("SELECT Number FROM LVL")
     result = cursor.fetchone()
     conn.close()
-    if result:
-        return result[0]
-    return None
+    return result[0] if result else 1
+
 
 
 class Hero(arcade.Sprite):
     def __init__(self, screen_width, screen_height):
         super().__init__(scale=0.3)
-        self.SCREEN_WIDTH = screen_width
-        self.SCREEN_HEIGHT = screen_height
 
-        self.FLOOR_Y_PERCENT = 0.1  # Пол на 10% от высоты экрана
-        self.MARGIN_X_PERCENT = 0.05  # Отступы по 5% с боков
-        self.MARGIN_TOP_PERCENT = 0.9  # Потолок на 90% высоты
+        self.speed = 200
+        self.center_x = screen_width / 2
+        self.center_y = screen_height * 0.1 + 20
+        self.facing_right = True
 
-        # ФИЗИКА
-        self.speed = 200  # Увеличил
-        self.jump_speed = 28
-        self.gravity = 2
-        self.max_fall_speed = -15
-        self.on_ground = False
-        self.can_jump = True
-        self.change_y = 0
+        self.walk_right = [
+            arcade.load_texture(str(CHAR_DIR / f"{i}.png"))
+            for i in range(1, 11)
+        ]
+        self.walk_left = [
+            arcade.load_texture(str(CHAR_DIR / "влево" / f"{i}.png"))
+            for i in range(1, 11)
+        ]
 
-        # Центрируем персонажа
-        self.center_x = self.SCREEN_WIDTH / 2  # теперь по центру относительно сторон, а не по пикселям
-        self.center_y = self.SCREEN_HEIGHT * self.FLOOR_Y_PERCENT + 20
+        self.texture = self.walk_right[0]
+        self.frame = 0
+        self.timer = 0
 
-        self.facing_right = True  # True = смотрит вправо, False = влево
-        # Загрузка текстур для анимации
-        # ходьба вправо
-        self.walk_right_textures = []
-        for i in range(1, 11):
-            try:
-                texture = arcade.load_texture(f"character/{i}.png")
-                self.walk_right_textures.append(texture)
-            except:
-                # Заглушка если файл не найден
-                texture = arcade.make_soft_square_texture(50, arcade.color.BLUE)
-                self.walk_right_textures.append(texture)
+    def update_animation(self, delta_time):
+        self.timer += delta_time
+        if self.timer > 0.1:
+            self.timer = 0
+            self.frame = (self.frame + 1) % 10
+            self.texture = (
+                self.walk_right[self.frame]
+                if self.facing_right
+                else self.walk_left[self.frame]
+            )
 
-        # ходьба влево
-        self.walk_left_textures = []
-        for i in range(1, 11):
-            try:
-                texture = arcade.load_texture(f"character/влево/{i}.png")
-                self.walk_left_textures.append(texture)
-            except:
-                # Заглушка если файл не найден
-                texture = arcade.make_soft_square_texture(50, arcade.color.BLUE)
-                self.walk_left_textures.append(texture)
-
-        # приседание фазы право
-        self.crouch_enter_textures = []  # 11-13: вход в присед
-        self.crouch_loop_textures = []  # 14-16: цикл в приседе
-        self.crouch_exit_textures = []  # 13-11: выход из приседа (обратный порядок)
-
-        all_crouch_textures = []
-        for i in range(11, 17):
-            try:
-                texture = arcade.load_texture(f"character/{i}.png")
-                all_crouch_textures.append(texture)
-
-            except:
-                # Заглушка если файл не найден
-                texture = arcade.make_soft_square_texture(50, arcade.color.GREEN)
-                all_crouch_textures.append(texture)
-
-        # Разделяем на фазы
-        if len(all_crouch_textures) >= 6:
-            self.crouch_enter_textures = all_crouch_textures[0:3]  # 11,12,13
-            self.crouch_loop_textures = all_crouch_textures[3:6]  # 14,15,16
-            self.crouch_exit_textures = [
-                all_crouch_textures[2],  # 13
-                all_crouch_textures[1],  # 12
-                all_crouch_textures[0]  # 11
-            ]  # выход в обратном порядке
-
-        # присед влево
-        self.crouch_left_textures = []
-        for i in range(11, 17):
-            try:
-                texture = arcade.load_texture(f"character/влево/{i}.png")
-                self.crouch_left_textures.append(texture)
-            except:
-                texture = arcade.make_soft_square_texture(50, arcade.color.GREEN)
-                self.crouch_left_textures.append(texture)
-
-        # разделяем присед влево на фазы
-        if len(self.crouch_left_textures) >= 6:
-            self.crouch_left_enter_textures = self.crouch_left_textures[0:3]
-            self.crouch_left_loop_textures = self.crouch_left_textures[3:6]
-            self.crouch_left_exit_textures = [
-                self.crouch_left_textures[2],
-                self.crouch_left_textures[1],
-                self.crouch_left_textures[0]
-            ]
-
-        # прыжок вправо
-        self.jump_right_textures = []
-        for i in range(17, 20):
-            try:
-                texture = arcade.load_texture(f"character/{i}.png")
-                self.jump_right_textures.append(texture)
-            except:
-                texture = arcade.make_soft_square_texture(50, arcade.color.YELLOW)
-                self.jump_right_textures.append(texture)
-
-        # прыжок влево
-        self.jump_left_textures = []
-        for i in range(17, 21):
-            try:
-                texture = arcade.load_texture(f"character/влево/{i}.png")
-                self.jump_left_textures.append(texture)
-            except:
-                texture = arcade.make_soft_square_texture(50, arcade.color.YELLOW)
-                self.jump_left_textures.append(texture)
-
-        # Первая текстура как idle
-        if self.walk_right_textures:
-            self.idle_texture = self.walk_right_textures[0]
-        elif self.walk_left_textures:
-            self.idle_texture = self.walk_left_textures[0]
-        else:
-            self.idle_texture = arcade.make_soft_square_texture(50, arcade.color.RED)
-        self.texture = self.idle_texture
-
-        # ходьба
-        self.texture_walking = 0
-        self.walk_timer = 0
-        self.walk_texture_change_delay = 0.1  # Задержка между сменой текстур ходьбы
-
-        # приседание
-        self.crouch_state = "idle"  # "idle", "entering", "looping", "exiting"
-        self.texture_crouching = 0
-        self.crouch_timer = 0
-        self.crouch_texture_change_delay = 0.1  # Задержка между сменой текстур приседания
-
-        # прыжок
-        self.texture_jumping = 0
-        self.jump_timer = 0
-        self.jump_texture_change_delay = 0.1
-
-        self.is_walking_right = False
-        self.is_walking_left = False
-        self.is_crouching = False
-        self.is_jumping = False
-        self.can_jump = True  # можно ли прыгать
-
-    def update_animation(self, delta_time: float = 1 / 60):
-        """Обновление анимации"""
-
-        # прыжок самый высокий приоритет
-        if self.is_jumping:
-            self.jump_timer += delta_time
-            if self.jump_timer >= self.jump_texture_change_delay:
-                self.jump_timer = 0
-                self.texture_jumping = (self.texture_jumping + 1) % len(self.jump_right_textures)
-
-                # выбираем текстуру в зависимости от направления
-                if self.facing_right:
-                    self.texture = self.jump_right_textures[self.texture_jumping]
-                else:
-                    self.texture = self.jump_left_textures[self.texture_jumping]
-            return
-
-            # приседание
-        elif self.crouch_state != "idle":
-            textures_enter = self.crouch_enter_textures if self.facing_right else self.crouch_left_enter_textures
-            textures_loop = self.crouch_loop_textures if self.facing_right else self.crouch_left_loop_textures
-            textures_exit = self.crouch_exit_textures if self.facing_right else self.crouch_left_exit_textures
-
-            self.crouch_timer += delta_time
-            if self.crouch_timer >= self.crouch_texture_change_delay:
-                self.crouch_timer = 0
-
-                if self.crouch_state == "entering":
-                    self.texture_crouching += 1
-                    if self.texture_crouching >= len(textures_enter) - 1:
-                        self.texture_crouching = len(textures_enter) - 1
-                        self.crouch_state = "looping"
-                    self.texture = textures_enter[self.texture_crouching]
-
-                elif self.crouch_state == "looping":
-                    self.texture_crouching = (self.texture_crouching + 1) % len(textures_loop)
-                    self.texture = textures_loop[self.texture_crouching]
-
-                elif self.crouch_state == "exiting":
-                    self.texture_crouching += 1
-                    if self.texture_crouching >= len(textures_exit) - 1:
-                        self.texture_crouching = len(textures_exit) - 1
-                        self.crouch_state = "idle"
-                        if self.facing_right:
-                            self.texture = self.walk_right_textures[
-                                0] if self.walk_right_textures else self.idle_texture
-                        else:
-                            self.texture = self.walk_left_textures[0] if self.walk_left_textures else self.idle_texture
-                    else:
-                        self.texture = textures_exit[self.texture_crouching]
-
-            return
-
-        # ходьба вправо
-        elif self.is_walking_right:
-            self.walk_timer += delta_time
-            if self.walk_timer >= self.walk_texture_change_delay:
-                self.walk_timer = 0
-                self.texture_walking += 1
-                if self.texture_walking >= len(self.walk_right_textures):
-                    self.texture_walking = 0
-                self.texture = self.walk_right_textures[self.texture_walking]
-
-        # ходьба влево
-        elif self.is_walking_left:
-            self.walk_timer += delta_time
-            if self.walk_timer >= self.walk_texture_change_delay:
-                self.walk_timer = 0
-                self.texture_walking += 1
-                if self.texture_walking >= len(self.walk_left_textures):
-                    self.texture_walking = 0
-                self.texture = self.walk_left_textures[self.texture_walking]
-
-        # idle - текстура по направлению
-        else:
-            if self.facing_right:
-                # Смотрим вправо - используем первую текстуру ходьбы вправо
-                if self.walk_right_textures:
-                    self.texture = self.walk_right_textures[0]
-                else:
-                    self.texture = self.idle_texture
-            else:
-                # Смотрим влево - используем первую текстуру ходьбы влево
-                if self.walk_left_textures:
-                    self.texture = self.walk_left_textures[0]
-                else:
-                    self.texture = self.idle_texture
-
-            # Сбрасываем счетчики
-            self.texture_walking = 0
-            self.texture_crouching = 0
-
-    def update_physics(self, delta_time):
-        """Обновление физики - плавная версия"""
-        # Применяем МАЛЕНЬКУЮ гравитацию
-        self.change_y -= self.gravity
-
-        # Ограничиваем МЕДЛЕННУЮ скорость падения
-        if self.change_y < self.max_fall_speed:
-            self.change_y = self.max_fall_speed
-
-        # Умножаем на delta_time для плавности
-        self.center_y += self.change_y * delta_time
-
-        # Проверяем пол
-        floor_level = 100
-        if self.center_y <= floor_level:
-            self.center_y = floor_level
-            self.change_y = 0
-            self.on_ground = True
-            self.is_jumping = False
-            self.can_jump = True
-        else:
-            self.on_ground = False
-
-        # Показываем анимацию прыжка если в воздухе
-        if not self.on_ground:
-            self.is_jumping = True
-
-    def update_movement(self, delta_time, left_pressed, right_pressed, up_pressed, down_pressed):
-        """Перемещение персонажа"""
-
-        # Обновляем физику
-        self.update_physics(delta_time)
-
-        # Определяем новое состояние приседа
-        currently_crouching = down_pressed
-
-        # Логика переходов между состояниями приседа
-        if currently_crouching and not self.is_crouching and self.crouch_state == "idle":
-            # Начали приседать
-            self.crouch_state = "entering"
-            self.crouch_frame = 0
-
-        elif not currently_crouching and self.is_crouching:
-            # Перестали приседать - начинаем выход
-            if self.crouch_state == "looping":
-                self.crouch_state = "exiting"
-                self.crouch_frame = 0
-            elif self.crouch_state == "entering":
-                # Если еще не дошли до конца входа - сразу выходим
-                self.crouch_state = "exiting"
-                # Начинаем с текущего кадра в обратном порядке
-                if self.crouch_frame > 0:
-                    self.crouch_frame = len(self.crouch_exit_textures) - self.crouch_frame - 1
-
-        # Сохраняем состояние для следующего кадра
-        self.is_crouching = currently_crouching
-
-        # ПРЫЖОК
-        if up_pressed and self.on_ground and self.can_jump and not self.is_crouching:
-            self.change_y = self.jump_speed
-            self.is_jumping = True
-            self.on_ground = False
-            self.can_jump = False
-            self.jump_frame = 0
-            self.jump_timer = 0
-
-        # Ходьба
-        self.is_walking_right = False
-        self.is_walking_left = False
-        if left_pressed:
-            self.center_x -= self.speed * delta_time
-            self.is_walking_left = True
-            self.facing_right = False  # влево
-
-        if right_pressed:
-            self.center_x += self.speed * delta_time
-            self.is_walking_right = True
-            self.facing_right = True  # вправо
-
-        # Границы по X
-        margin_left = 25
-        margin_right = 1900
-        self.center_x = max(margin_left, min(margin_right, self.center_x))
-
-        # Граница по Y сверху
-        margin_top = 550
-        if self.center_y > margin_top:
-            self.center_y = margin_top
-            self.change_y = min(self.change_y, 0)  # останавливаем движение вверх
-
+    def update(self, delta_time):
         self.update_animation(delta_time)
 
 
-class LVL_1(
-    arcade.View):  # у меня весь код написан на arcade.View, поэтому я поменял arcade.windows , я немного накосячил со списком текстур
-    def __init__(self, lvl_to_load):
+class BaseLevel(arcade.View):
+    def __init__(self, level_number: int, background_name: str):
         super().__init__()
-        self.lvl_num = lvl_to_load
+        self.level_number = level_number
+        self.background = arcade.load_texture(
+            str(BG_DIR / background_name)
+        )
 
-        # Загружаем фон с заглушкой
-        try:
-            self.background_texture = arcade.load_texture("backgrounds/photo_2026-01-06_21-39-45.jpg")
-        except:
-            self.background_texture = None
-        # Флаги нажатых клавиш
-        self.left_pressed = False
-        self.right_pressed = False
-        self.up_pressed = False
-        self.down_pressed = False
-
-        self.player_list = arcade.SpriteList()
-        self.wall_list = arcade.SpriteList()
-        self.bullet_list = arcade.SpriteList()
+        self.left = False
+        self.right = False
         self.player = None
-
-        self.manager = UIManager()
-        self.manager.enable()
-
-    def setup(self):  # эта функция не вызывается, завтра нужно разобраться, как ее вызвать
-        # Создаём SpriteList для разных типов объектов
-        self.player_list = arcade.SpriteList()  # Список игроков
-        self.wall_list = arcade.SpriteList()  # Список стен
-        self.bullet_list = arcade.SpriteList()
+        self.player_list = arcade.SpriteList()
 
     def on_show_view(self):
-        self.setup_game_elements()
-
-    def setup_game_elements(self):  # подгрузка класса героя
         self.player = Hero(self.window.width, self.window.height)
         self.player_list.append(self.player)
 
     def on_draw(self):
         self.clear()
-
-        # 1. Рисуем фон, растягивая его на весь экран
-        if self.background_texture:
-            arcade.draw_texture_rect(
-                texture=self.background_texture,
-                rect=arcade.rect.XYWH(
-                    self.window.width / 2,
-                    self.window.height / 2,
-                    self.window.width,
-                    self.window.height
-                )
+        arcade.draw_texture_rect(
+            self.background,
+            arcade.rect.XYWH(
+                self.window.width / 2,
+                self.window.height / 2,
+                self.window.width,
+                self.window.height
             )
-
-        # 2. Рисуем объекты поверх фона
-        self.wall_list.draw()
+        )
         self.player_list.draw()
-        self.bullet_list.draw()
-
-        self.manager.draw()  # Рисуем UI, если он есть
 
     def on_update(self, delta_time):
-        if self.player:
-            self.player.update_movement(delta_time,
-                                        self.left_pressed,
-                                        self.right_pressed,
-                                        self.up_pressed,
-                                        self.down_pressed)
-            self.player_list.update()
+        if self.left:
+            self.player.center_x -= self.player.speed * delta_time
+            self.player.facing_right = False
+        if self.right:
+            self.player.center_x += self.player.speed * delta_time
+            self.player.facing_right = True
+        self.player_list.update(delta_time)
 
     def on_key_press(self, key, modifiers):
-        if key == arcade.key.ESCAPE:
-            # Возвращаемся к MapView (или куда нужно)
+        if key in (arcade.key.A, arcade.key.LEFT):
+            self.left = True
+        elif key in (arcade.key.D, arcade.key.RIGHT):
+            self.right = True
+        elif key == arcade.key.ESCAPE:
             self.window.show_view(MapView())
-        elif key == arcade.key.LEFT or key == arcade.key.A:
-            self.left_pressed = True
-        elif key == arcade.key.RIGHT or key == arcade.key.D:
-            self.right_pressed = True
-        elif key == arcade.key.UP or key == arcade.key.W:
-            self.up_pressed = True
-        elif key == arcade.key.DOWN or key == arcade.key.S:
-            self.down_pressed = True
 
     def on_key_release(self, key, modifiers):
-        if key == arcade.key.LEFT or key == arcade.key.A:
-            self.left_pressed = False
-        elif key == arcade.key.RIGHT or key == arcade.key.D:
-            self.right_pressed = False
-        elif key == arcade.key.UP or key == arcade.key.W:
-            self.up_pressed = False
-        elif key == arcade.key.DOWN or key == arcade.key.S:
-            self.down_pressed = False
-
-    def on_resize(self, width, height):
-        """Обновление размеров для Hero при ресайзе"""
-        super().on_resize(width, height)
-        if self.player:
-            self.player.SCREEN_WIDTH = width
-            self.player.SCREEN_HEIGHT = height
-            # При изменении размера, возможно, потребуется пересчитать позицию пола
-            self.player.update_physics(0)  # Пересчет физики без перемещения
-class LVL_2(
-    arcade.View):  # у меня весь код написан на arcade.View, поэтому я поменял arcade.windows , я немного накосячил со списком текстур
-    def __init__(self, lvl_to_load):
-        super().__init__()
-        self.lvl_num = lvl_to_load
-
-        # Загружаем фон с заглушкой
-        try:
-            self.background_texture = arcade.load_texture("backgrounds/photo_2026-01-06_21-39-45 (2).jpg")
-        except:
-            self.background_texture = None
-        # Флаги нажатых клавиш
-        self.left_pressed = False
-        self.right_pressed = False
-        self.up_pressed = False
-        self.down_pressed = False
-
-        self.player_list = arcade.SpriteList()
-        self.wall_list = arcade.SpriteList()
-        self.bullet_list = arcade.SpriteList()
-        self.player = None
-
-        self.manager = UIManager()
-        self.manager.enable()
-
-    def setup(self):  # эта функция не вызывается, завтра нужно разобраться, как ее вызвать
-        # Создаём SpriteList для разных типов объектов
-        self.player_list = arcade.SpriteList()  # Список игроков
-        self.wall_list = arcade.SpriteList()  # Список стен
-        self.bullet_list = arcade.SpriteList()
-
-    def on_show_view(self):
-        self.setup_game_elements()
-
-    def setup_game_elements(self):  # подгрузка класса героя
-        self.player = Hero(self.window.width, self.window.height)
-        self.player_list.append(self.player)
-
-    def on_draw(self):
-        self.clear()
-
-        # 1. Рисуем фон, растягивая его на весь экран
-        if self.background_texture:
-            arcade.draw_texture_rect(
-                texture=self.background_texture,
-                rect=arcade.rect.XYWH(
-                    self.window.width / 2,
-                    self.window.height / 2,
-                    self.window.width,
-                    self.window.height
-                )
-            )
-
-        # 2. Рисуем объекты поверх фона
-        self.wall_list.draw()
-        self.player_list.draw()
-        self.bullet_list.draw()
-
-        self.manager.draw()  # Рисуем UI, если он есть
-
-    def on_update(self, delta_time):
-        if self.player:
-            self.player.update_movement(delta_time,
-                                        self.left_pressed,
-                                        self.right_pressed,
-                                        self.up_pressed,
-                                        self.down_pressed)
-            self.player_list.update()
-
-    def on_key_press(self, key, modifiers):
-        if key == arcade.key.ESCAPE:
-            # Возвращаемся к MapView (или куда нужно)
-            self.window.show_view(MapView())
-        elif key == arcade.key.LEFT or key == arcade.key.A:
-            self.left_pressed = True
-        elif key == arcade.key.RIGHT or key == arcade.key.D:
-            self.right_pressed = True
-        elif key == arcade.key.UP or key == arcade.key.W:
-            self.up_pressed = True
-        elif key == arcade.key.DOWN or key == arcade.key.S:
-            self.down_pressed = True
-
-    def on_key_release(self, key, modifiers):
-        if key == arcade.key.LEFT or key == arcade.key.A:
-            self.left_pressed = False
-        elif key == arcade.key.RIGHT or key == arcade.key.D:
-            self.right_pressed = False
-        elif key == arcade.key.UP or key == arcade.key.W:
-            self.up_pressed = False
-        elif key == arcade.key.DOWN or key == arcade.key.S:
-            self.down_pressed = False
-
-    def on_resize(self, width, height):
-        """Обновление размеров для Hero при ресайзе"""
-        super().on_resize(width, height)
-        if self.player:
-            self.player.SCREEN_WIDTH = width
-            self.player.SCREEN_HEIGHT = height
-            # При изменении размера, возможно, потребуется пересчитать позицию пола
-            self.player.update_physics(0)  # Пересчет физики без перемещения
-class LVL_3(
-    arcade.View):  # у меня весь код написан на arcade.View, поэтому я поменял arcade.windows , я немного накосячил со списком текстур
-    def __init__(self, lvl_to_load):
-        super().__init__()
-        self.lvl_num = lvl_to_load
-
-        # Загружаем фон с заглушкой
-        try:
-            self.background_texture = arcade.load_texture("backgrounds/photo_2026-01-06_21-39-45.jpg")
-        except:
-            self.background_texture = None
-        # Флаги нажатых клавиш
-        self.left_pressed = False
-        self.right_pressed = False
-        self.up_pressed = False
-        self.down_pressed = False
-
-        self.player_list = arcade.SpriteList()
-        self.wall_list = arcade.SpriteList()
-        self.bullet_list = arcade.SpriteList()
-        self.player = None
-
-        self.manager = UIManager()
-        self.manager.enable()
-
-    def setup(self):  # эта функция не вызывается, завтра нужно разобраться, как ее вызвать
-        # Создаём SpriteList для разных типов объектов
-        self.player_list = arcade.SpriteList()  # Список игроков
-        self.wall_list = arcade.SpriteList()  # Список стен
-        self.bullet_list = arcade.SpriteList()
-
-    def on_show_view(self):
-        self.setup_game_elements()
-
-    def setup_game_elements(self):  # подгрузка класса героя
-        self.player = Hero(self.window.width, self.window.height)
-        self.player_list.append(self.player)
-
-    def on_draw(self):
-        self.clear()
-
-        # 1. Рисуем фон, растягивая его на весь экран
-        if self.background_texture:
-            arcade.draw_texture_rect(
-                texture=self.background_texture,
-                rect=arcade.rect.XYWH(
-                    self.window.width / 2,
-                    self.window.height / 2,
-                    self.window.width,
-                    self.window.height
-                )
-            )
-
-        # 2. Рисуем объекты поверх фона
-        self.wall_list.draw()
-        self.player_list.draw()
-        self.bullet_list.draw()
-
-        self.manager.draw()  # Рисуем UI, если он есть
-
-    def on_update(self, delta_time):
-        if self.player:
-            self.player.update_movement(delta_time,
-                                        self.left_pressed,
-                                        self.right_pressed,
-                                        self.up_pressed,
-                                        self.down_pressed)
-            self.player_list.update()
-
-    def on_key_press(self, key, modifiers):
-        if key == arcade.key.ESCAPE:
-            # Возвращаемся к MapView (или куда нужно)
-            self.window.show_view(MapView())
-        elif key == arcade.key.LEFT or key == arcade.key.A:
-            self.left_pressed = True
-        elif key == arcade.key.RIGHT or key == arcade.key.D:
-            self.right_pressed = True
-        elif key == arcade.key.UP or key == arcade.key.W:
-            self.up_pressed = True
-        elif key == arcade.key.DOWN or key == arcade.key.S:
-            self.down_pressed = True
-
-    def on_key_release(self, key, modifiers):
-        if key == arcade.key.LEFT or key == arcade.key.A:
-            self.left_pressed = False
-        elif key == arcade.key.RIGHT or key == arcade.key.D:
-            self.right_pressed = False
-        elif key == arcade.key.UP or key == arcade.key.W:
-            self.up_pressed = False
-        elif key == arcade.key.DOWN or key == arcade.key.S:
-            self.down_pressed = False
-
-    def on_resize(self, width, height):
-        """Обновление размеров для Hero при ресайзе"""
-        super().on_resize(width, height)
-        if self.player:
-            self.player.SCREEN_WIDTH = width
-            self.player.SCREEN_HEIGHT = height
-            # При изменении размера, возможно, потребуется пересчитать позицию пола
-            self.player.update_physics(0)  # Пересчет физики без перемещения
-class LVL_4(
-    arcade.View):  # у меня весь код написан на arcade.View, поэтому я поменял arcade.windows , я немного накосячил со списком текстур
-    def __init__(self, lvl_to_load):
-        super().__init__()
-        self.lvl_num = lvl_to_load
-
-        # Загружаем фон с заглушкой
-        try:
-            self.background_texture = arcade.load_texture("backgrounds/photo_2026-01-06_21-39-45.jpg")
-        except:
-            self.background_texture = None
-        # Флаги нажатых клавиш
-        self.left_pressed = False
-        self.right_pressed = False
-        self.up_pressed = False
-        self.down_pressed = False
-
-        self.player_list = arcade.SpriteList()
-        self.wall_list = arcade.SpriteList()
-        self.bullet_list = arcade.SpriteList()
-        self.player = None
-
-        self.manager = UIManager()
-        self.manager.enable()
-
-    def setup(self):  # эта функция не вызывается, завтра нужно разобраться, как ее вызвать
-        # Создаём SpriteList для разных типов объектов
-        self.player_list = arcade.SpriteList()  # Список игроков
-        self.wall_list = arcade.SpriteList()  # Список стен
-        self.bullet_list = arcade.SpriteList()
-
-    def on_show_view(self):
-        self.setup_game_elements()
-
-    def setup_game_elements(self):  # подгрузка класса героя
-        self.player = Hero(self.window.width, self.window.height)
-        self.player_list.append(self.player)
-
-    def on_draw(self):
-        self.clear()
-
-        # 1. Рисуем фон, растягивая его на весь экран
-        if self.background_texture:
-            arcade.draw_texture_rect(
-                texture=self.background_texture,
-                rect=arcade.rect.XYWH(
-                    self.window.width / 2,
-                    self.window.height / 2,
-                    self.window.width,
-                    self.window.height
-                )
-            )
-
-        # 2. Рисуем объекты поверх фона
-        self.wall_list.draw()
-        self.player_list.draw()
-        self.bullet_list.draw()
-
-        self.manager.draw()  # Рисуем UI, если он есть
-
-    def on_update(self, delta_time):
-        if self.player:
-            self.player.update_movement(delta_time,
-                                        self.left_pressed,
-                                        self.right_pressed,
-                                        self.up_pressed,
-                                        self.down_pressed)
-            self.player_list.update()
-
-    def on_key_press(self, key, modifiers):
-        if key == arcade.key.ESCAPE:
-            # Возвращаемся к MapView (или куда нужно)
-            self.window.show_view(MapView())
-        elif key == arcade.key.LEFT or key == arcade.key.A:
-            self.left_pressed = True
-        elif key == arcade.key.RIGHT or key == arcade.key.D:
-            self.right_pressed = True
-        elif key == arcade.key.UP or key == arcade.key.W:
-            self.up_pressed = True
-        elif key == arcade.key.DOWN or key == arcade.key.S:
-            self.down_pressed = True
-
-    def on_key_release(self, key, modifiers):
-        if key == arcade.key.LEFT or key == arcade.key.A:
-            self.left_pressed = False
-        elif key == arcade.key.RIGHT or key == arcade.key.D:
-            self.right_pressed = False
-        elif key == arcade.key.UP or key == arcade.key.W:
-            self.up_pressed = False
-        elif key == arcade.key.DOWN or key == arcade.key.S:
-            self.down_pressed = False
-
-    def on_resize(self, width, height):
-        """Обновление размеров для Hero при ресайзе"""
-        super().on_resize(width, height)
-        if self.player:
-            self.player.SCREEN_WIDTH = width
-            self.player.SCREEN_HEIGHT = height
-            # При изменении размера, возможно, потребуется пересчитать позицию пола
-            self.player.update_physics(0)  # Пересчет физики без перемещения
-class LVL_5(
-    arcade.View):  # у меня весь код написан на arcade.View, поэтому я поменял arcade.windows , я немного накосячил со списком текстур
-    def __init__(self, lvl_to_load):
-        super().__init__()
-        self.lvl_num = lvl_to_load
-
-        # Загружаем фон с заглушкой
-        try:
-            self.background_texture = arcade.load_texture("backgrounds/photo_2026-01-06_21-39-45.jpg")
-        except:
-            self.background_texture = None
-        # Флаги нажатых клавиш
-        self.left_pressed = False
-        self.right_pressed = False
-        self.up_pressed = False
-        self.down_pressed = False
-
-        self.player_list = arcade.SpriteList()
-        self.wall_list = arcade.SpriteList()
-        self.bullet_list = arcade.SpriteList()
-        self.player = None
-
-        self.manager = UIManager()
-        self.manager.enable()
-
-    def setup(self):  # эта функция не вызывается, завтра нужно разобраться, как ее вызвать
-        # Создаём SpriteList для разных типов объектов
-        self.player_list = arcade.SpriteList()  # Список игроков
-        self.wall_list = arcade.SpriteList()  # Список стен
-        self.bullet_list = arcade.SpriteList()
-
-    def on_show_view(self):
-        self.setup_game_elements()
-
-    def setup_game_elements(self):  # подгрузка класса героя
-        self.player = Hero(self.window.width, self.window.height)
-        self.player_list.append(self.player)
-
-    def on_draw(self):
-        self.clear()
-
-        # 1. Рисуем фон, растягивая его на весь экран
-        if self.background_texture:
-            arcade.draw_texture_rect(
-                texture=self.background_texture,
-                rect=arcade.rect.XYWH(
-                    self.window.width / 2,
-                    self.window.height / 2,
-                    self.window.width,
-                    self.window.height
-                )
-            )
-
-        # 2. Рисуем объекты поверх фона
-        self.wall_list.draw()
-        self.player_list.draw()
-        self.bullet_list.draw()
-
-        self.manager.draw()  # Рисуем UI, если он есть
-
-    def on_update(self, delta_time):
-        if self.player:
-            self.player.update_movement(delta_time,
-                                        self.left_pressed,
-                                        self.right_pressed,
-                                        self.up_pressed,
-                                        self.down_pressed)
-            self.player_list.update()
-
-    def on_key_press(self, key, modifiers):
-        if key == arcade.key.ESCAPE:
-            # Возвращаемся к MapView (или куда нужно)
-            self.window.show_view(MapView())
-        elif key == arcade.key.LEFT or key == arcade.key.A:
-            self.left_pressed = True
-        elif key == arcade.key.RIGHT or key == arcade.key.D:
-            self.right_pressed = True
-        elif key == arcade.key.UP or key == arcade.key.W:
-            self.up_pressed = True
-        elif key == arcade.key.DOWN or key == arcade.key.S:
-            self.down_pressed = True
-
-    def on_key_release(self, key, modifiers):
-        if key == arcade.key.LEFT or key == arcade.key.A:
-            self.left_pressed = False
-        elif key == arcade.key.RIGHT or key == arcade.key.D:
-            self.right_pressed = False
-        elif key == arcade.key.UP or key == arcade.key.W:
-            self.up_pressed = False
-        elif key == arcade.key.DOWN or key == arcade.key.S:
-            self.down_pressed = False
-
-    def on_resize(self, width, height):
-        """Обновление размеров для Hero при ресайзе"""
-        super().on_resize(width, height)
-        if self.player:
-            self.player.SCREEN_WIDTH = width
-            self.player.SCREEN_HEIGHT = height
-            # При изменении размера, возможно, потребуется пересчитать позицию пола
-            self.player.update_physics(0)  # Пересчет физики без перемещения
-class LVL_6(
-    arcade.View):  # у меня весь код написан на arcade.View, поэтому я поменял arcade.windows , я немного накосячил со списком текстур
-    def __init__(self, lvl_to_load):
-        super().__init__()
-        self.lvl_num = lvl_to_load
-
-        # Загружаем фон с заглушкой
-        try:
-            self.background_texture = arcade.load_texture("backgrounds/photo_2026-01-06_21-39-45.jpg")
-        except:
-            self.background_texture = None
-        # Флаги нажатых клавиш
-        self.left_pressed = False
-        self.right_pressed = False
-        self.up_pressed = False
-        self.down_pressed = False
-
-        self.player_list = arcade.SpriteList()
-        self.wall_list = arcade.SpriteList()
-        self.bullet_list = arcade.SpriteList()
-        self.player = None
-
-        self.manager = UIManager()
-        self.manager.enable()
-
-    def setup(self):  # эта функция не вызывается, завтра нужно разобраться, как ее вызвать
-        # Создаём SpriteList для разных типов объектов
-        self.player_list = arcade.SpriteList()  # Список игроков
-        self.wall_list = arcade.SpriteList()  # Список стен
-        self.bullet_list = arcade.SpriteList()
-
-    def on_show_view(self):
-        self.setup_game_elements()
-
-    def setup_game_elements(self):  # подгрузка класса героя
-        self.player = Hero(self.window.width, self.window.height)
-        self.player_list.append(self.player)
-
-    def on_draw(self):
-        self.clear()
-
-        # 1. Рисуем фон, растягивая его на весь экран
-        if self.background_texture:
-            arcade.draw_texture_rect(
-                texture=self.background_texture,
-                rect=arcade.rect.XYWH(
-                    self.window.width / 2,
-                    self.window.height / 2,
-                    self.window.width,
-                    self.window.height
-                )
-            )
-
-        # 2. Рисуем объекты поверх фона
-        self.wall_list.draw()
-        self.player_list.draw()
-        self.bullet_list.draw()
-
-        self.manager.draw()  # Рисуем UI, если он есть
-
-    def on_update(self, delta_time):
-        if self.player:
-            self.player.update_movement(delta_time,
-                                        self.left_pressed,
-                                        self.right_pressed,
-                                        self.up_pressed,
-                                        self.down_pressed)
-            self.player_list.update()
-
-    def on_key_press(self, key, modifiers):
-        if key == arcade.key.ESCAPE:
-            # Возвращаемся к MapView (или куда нужно)
-            self.window.show_view(MapView())
-        elif key == arcade.key.LEFT or key == arcade.key.A:
-            self.left_pressed = True
-        elif key == arcade.key.RIGHT or key == arcade.key.D:
-            self.right_pressed = True
-        elif key == arcade.key.UP or key == arcade.key.W:
-            self.up_pressed = True
-        elif key == arcade.key.DOWN or key == arcade.key.S:
-            self.down_pressed = True
-
-    def on_key_release(self, key, modifiers):
-        if key == arcade.key.LEFT or key == arcade.key.A:
-            self.left_pressed = False
-        elif key == arcade.key.RIGHT or key == arcade.key.D:
-            self.right_pressed = False
-        elif key == arcade.key.UP or key == arcade.key.W:
-            self.up_pressed = False
-        elif key == arcade.key.DOWN or key == arcade.key.S:
-            self.down_pressed = False
-
-    def on_resize(self, width, height):
-        """Обновление размеров для Hero при ресайзе"""
-        super().on_resize(width, height)
-        if self.player:
-            self.player.SCREEN_WIDTH = width
-            self.player.SCREEN_HEIGHT = height
-            # При изменении размера, возможно, потребуется пересчитать позицию пола
-            self.player.update_physics(0)  # Пересчет физики без перемещения
-class LVL_7(
-    arcade.View):  # у меня весь код написан на arcade.View, поэтому я поменял arcade.windows , я немного накосячил со списком текстур
-    def __init__(self, lvl_to_load):
-        super().__init__()
-        self.lvl_num = lvl_to_load
-
-        # Загружаем фон с заглушкой
-        try:
-            self.background_texture = arcade.load_texture("backgrounds/photo_2026-01-06_21-39-45.jpg")
-        except:
-            self.background_texture = None
-        # Флаги нажатых клавиш
-        self.left_pressed = False
-        self.right_pressed = False
-        self.up_pressed = False
-        self.down_pressed = False
-
-        self.player_list = arcade.SpriteList()
-        self.wall_list = arcade.SpriteList()
-        self.bullet_list = arcade.SpriteList()
-        self.player = None
-
-        self.manager = UIManager()
-        self.manager.enable()
-
-    def setup(self):  # эта функция не вызывается, завтра нужно разобраться, как ее вызвать
-        # Создаём SpriteList для разных типов объектов
-        self.player_list = arcade.SpriteList()  # Список игроков
-        self.wall_list = arcade.SpriteList()  # Список стен
-        self.bullet_list = arcade.SpriteList()
-
-    def on_show_view(self):
-        self.setup_game_elements()
-
-    def setup_game_elements(self):  # подгрузка класса героя
-        self.player = Hero(self.window.width, self.window.height)
-        self.player_list.append(self.player)
-
-    def on_draw(self):
-        self.clear()
-
-        # 1. Рисуем фон, растягивая его на весь экран
-        if self.background_texture:
-            arcade.draw_texture_rect(
-                texture=self.background_texture,
-                rect=arcade.rect.XYWH(
-                    self.window.width / 2,
-                    self.window.height / 2,
-                    self.window.width,
-                    self.window.height
-                )
-            )
-
-        # 2. Рисуем объекты поверх фона
-        self.wall_list.draw()
-        self.player_list.draw()
-        self.bullet_list.draw()
-
-        self.manager.draw()  # Рисуем UI, если он есть
-
-    def on_update(self, delta_time):
-        if self.player:
-            self.player.update_movement(delta_time,
-                                        self.left_pressed,
-                                        self.right_pressed,
-                                        self.up_pressed,
-                                        self.down_pressed)
-            self.player_list.update()
-
-    def on_key_press(self, key, modifiers):
-        if key == arcade.key.ESCAPE:
-            # Возвращаемся к MapView (или куда нужно)
-            self.window.show_view(MapView())
-        elif key == arcade.key.LEFT or key == arcade.key.A:
-            self.left_pressed = True
-        elif key == arcade.key.RIGHT or key == arcade.key.D:
-            self.right_pressed = True
-        elif key == arcade.key.UP or key == arcade.key.W:
-            self.up_pressed = True
-        elif key == arcade.key.DOWN or key == arcade.key.S:
-            self.down_pressed = True
-
-    def on_key_release(self, key, modifiers):
-        if key == arcade.key.LEFT or key == arcade.key.A:
-            self.left_pressed = False
-        elif key == arcade.key.RIGHT or key == arcade.key.D:
-            self.right_pressed = False
-        elif key == arcade.key.UP or key == arcade.key.W:
-            self.up_pressed = False
-        elif key == arcade.key.DOWN or key == arcade.key.S:
-            self.down_pressed = False
-
-    def on_resize(self, width, height):
-        """Обновление размеров для Hero при ресайзе"""
-        super().on_resize(width, height)
-        if self.player:
-            self.player.SCREEN_WIDTH = width
-            self.player.SCREEN_HEIGHT = height
-            # При изменении размера, возможно, потребуется пересчитать позицию пола
-            self.player.update_physics(0)  # Пересчет физики без перемещения
-class LVL_8(
-    arcade.View):  # у меня весь код написан на arcade.View, поэтому я поменял arcade.windows , я немного накосячил со списком текстур
-    def __init__(self, lvl_to_load):
-        super().__init__()
-        self.lvl_num = lvl_to_load
-
-        # Загружаем фон с заглушкой
-        try:
-            self.background_texture = arcade.load_texture("backgrounds/photo_2026-01-06_21-39-45.jpg")
-        except:
-            self.background_texture = None
-        # Флаги нажатых клавиш
-        self.left_pressed = False
-        self.right_pressed = False
-        self.up_pressed = False
-        self.down_pressed = False
-
-        self.player_list = arcade.SpriteList()
-        self.wall_list = arcade.SpriteList()
-        self.bullet_list = arcade.SpriteList()
-        self.player = None
-
-        self.manager = UIManager()
-        self.manager.enable()
-
-    def setup(self):  # эта функция не вызывается, завтра нужно разобраться, как ее вызвать
-        # Создаём SpriteList для разных типов объектов
-        self.player_list = arcade.SpriteList()  # Список игроков
-        self.wall_list = arcade.SpriteList()  # Список стен
-        self.bullet_list = arcade.SpriteList()
-
-    def on_show_view(self):
-        self.setup_game_elements()
-
-    def setup_game_elements(self):  # подгрузка класса героя
-        self.player = Hero(self.window.width, self.window.height)
-        self.player_list.append(self.player)
-
-    def on_draw(self):
-        self.clear()
-
-        # 1. Рисуем фон, растягивая его на весь экран
-        if self.background_texture:
-            arcade.draw_texture_rect(
-                texture=self.background_texture,
-                rect=arcade.rect.XYWH(
-                    self.window.width / 2,
-                    self.window.height / 2,
-                    self.window.width,
-                    self.window.height
-                )
-            )
-
-        # 2. Рисуем объекты поверх фона
-        self.wall_list.draw()
-        self.player_list.draw()
-        self.bullet_list.draw()
-
-        self.manager.draw()  # Рисуем UI, если он есть
-
-    def on_update(self, delta_time):
-        if self.player:
-            self.player.update_movement(delta_time,
-                                        self.left_pressed,
-                                        self.right_pressed,
-                                        self.up_pressed,
-                                        self.down_pressed)
-            self.player_list.update()
-
-    def on_key_press(self, key, modifiers):
-        if key == arcade.key.ESCAPE:
-            # Возвращаемся к MapView (или куда нужно)
-            self.window.show_view(MapView())
-        elif key == arcade.key.LEFT or key == arcade.key.A:
-            self.left_pressed = True
-        elif key == arcade.key.RIGHT or key == arcade.key.D:
-            self.right_pressed = True
-        elif key == arcade.key.UP or key == arcade.key.W:
-            self.up_pressed = True
-        elif key == arcade.key.DOWN or key == arcade.key.S:
-            self.down_pressed = True
-
-    def on_key_release(self, key, modifiers):
-        if key == arcade.key.LEFT or key == arcade.key.A:
-            self.left_pressed = False
-        elif key == arcade.key.RIGHT or key == arcade.key.D:
-            self.right_pressed = False
-        elif key == arcade.key.UP or key == arcade.key.W:
-            self.up_pressed = False
-        elif key == arcade.key.DOWN or key == arcade.key.S:
-            self.down_pressed = False
-
-    def on_resize(self, width, height):
-        """Обновление размеров для Hero при ресайзе"""
-        super().on_resize(width, height)
-        if self.player:
-            self.player.SCREEN_WIDTH = width
-            self.player.SCREEN_HEIGHT = height
-            # При изменении размера, возможно, потребуется пересчитать позицию пола
-            self.player.update_physics(0)  # Пересчет физики без перемещения
-class LVL_9(
-    arcade.View):  # у меня весь код написан на arcade.View, поэтому я поменял arcade.windows , я немного накосячил со списком текстур
-    def __init__(self, lvl_to_load):
-        super().__init__()
-        self.lvl_num = lvl_to_load
-
-        # Загружаем фон с заглушкой
-        try:
-            self.background_texture = arcade.load_texture("backgrounds/photo_2026-01-06_21-39-45.jpg")
-        except:
-            self.background_texture = None
-        # Флаги нажатых клавиш
-        self.left_pressed = False
-        self.right_pressed = False
-        self.up_pressed = False
-        self.down_pressed = False
-
-        self.player_list = arcade.SpriteList()
-        self.wall_list = arcade.SpriteList()
-        self.bullet_list = arcade.SpriteList()
-        self.player = None
-
-        self.manager = UIManager()
-        self.manager.enable()
-
-    def setup(self):  # эта функция не вызывается, завтра нужно разобраться, как ее вызвать
-        # Создаём SpriteList для разных типов объектов
-        self.player_list = arcade.SpriteList()  # Список игроков
-        self.wall_list = arcade.SpriteList()  # Список стен
-        self.bullet_list = arcade.SpriteList()
-
-    def on_show_view(self):
-        self.setup_game_elements()
-
-    def setup_game_elements(self):  # подгрузка класса героя
-        self.player = Hero(self.window.width, self.window.height)
-        self.player_list.append(self.player)
-
-    def on_draw(self):
-        self.clear()
-
-        # 1. Рисуем фон, растягивая его на весь экран
-        if self.background_texture:
-            arcade.draw_texture_rect(
-                texture=self.background_texture,
-                rect=arcade.rect.XYWH(
-                    self.window.width / 2,
-                    self.window.height / 2,
-                    self.window.width,
-                    self.window.height
-                )
-            )
-
-        # 2. Рисуем объекты поверх фона
-        self.wall_list.draw()
-        self.player_list.draw()
-        self.bullet_list.draw()
-
-        self.manager.draw()  # Рисуем UI, если он есть
-
-    def on_update(self, delta_time):
-        if self.player:
-            self.player.update_movement(delta_time,
-                                        self.left_pressed,
-                                        self.right_pressed,
-                                        self.up_pressed,
-                                        self.down_pressed)
-            self.player_list.update()
-
-    def on_key_press(self, key, modifiers):
-        if key == arcade.key.ESCAPE:
-            # Возвращаемся к MapView (или куда нужно)
-            self.window.show_view(MapView())
-        elif key == arcade.key.LEFT or key == arcade.key.A:
-            self.left_pressed = True
-        elif key == arcade.key.RIGHT or key == arcade.key.D:
-            self.right_pressed = True
-        elif key == arcade.key.UP or key == arcade.key.W:
-            self.up_pressed = True
-        elif key == arcade.key.DOWN or key == arcade.key.S:
-            self.down_pressed = True
-
-    def on_key_release(self, key, modifiers):
-        if key == arcade.key.LEFT or key == arcade.key.A:
-            self.left_pressed = False
-        elif key == arcade.key.RIGHT or key == arcade.key.D:
-            self.right_pressed = False
-        elif key == arcade.key.UP or key == arcade.key.W:
-            self.up_pressed = False
-        elif key == arcade.key.DOWN or key == arcade.key.S:
-            self.down_pressed = False
-
-    def on_resize(self, width, height):
-        """Обновление размеров для Hero при ресайзе"""
-        super().on_resize(width, height)
-        if self.player:
-            self.player.SCREEN_WIDTH = width
-            self.player.SCREEN_HEIGHT = height
-            # При изменении размера, возможно, потребуется пересчитать позицию пола
-            self.player.update_physics(0)  # Пересчет физики без перемещения
-class LVL_10(
-    arcade.View):  # у меня весь код написан на arcade.View, поэтому я поменял arcade.windows , я немного накосячил со списком текстур
-    def __init__(self, lvl_to_load):
-        super().__init__()
-        self.lvl_num = lvl_to_load
-
-        # Загружаем фон с заглушкой
-        try:
-            self.background_texture = arcade.load_texture("backgrounds/photo_2026-01-06_21-39-45.jpg")
-        except:
-            self.background_texture = None
-        # Флаги нажатых клавиш
-        self.left_pressed = False
-        self.right_pressed = False
-        self.up_pressed = False
-        self.down_pressed = False
-
-        self.player_list = arcade.SpriteList()
-        self.wall_list = arcade.SpriteList()
-        self.bullet_list = arcade.SpriteList()
-        self.player = None
-
-        self.manager = UIManager()
-        self.manager.enable()
-
-    def setup(self):  # эта функция не вызывается, завтра нужно разобраться, как ее вызвать
-        # Создаём SpriteList для разных типов объектов
-        self.player_list = arcade.SpriteList()  # Список игроков
-        self.wall_list = arcade.SpriteList()  # Список стен
-        self.bullet_list = arcade.SpriteList()
-
-    def on_show_view(self):
-        self.setup_game_elements()
-
-    def setup_game_elements(self):  # подгрузка класса героя
-        self.player = Hero(self.window.width, self.window.height)
-        self.player_list.append(self.player)
-
-    def on_draw(self):
-        self.clear()
-
-        # 1. Рисуем фон, растягивая его на весь экран
-        if self.background_texture:
-            arcade.draw_texture_rect(
-                texture=self.background_texture,
-                rect=arcade.rect.XYWH(
-                    self.window.width / 2,
-                    self.window.height / 2,
-                    self.window.width,
-                    self.window.height
-                )
-            )
-
-        # 2. Рисуем объекты поверх фона
-        self.wall_list.draw()
-        self.player_list.draw()
-        self.bullet_list.draw()
-
-        self.manager.draw()  # Рисуем UI, если он есть
-
-    def on_update(self, delta_time):
-        if self.player:
-            self.player.update_movement(delta_time,
-                                        self.left_pressed,
-                                        self.right_pressed,
-                                        self.up_pressed,
-                                        self.down_pressed)
-            self.player_list.update()
-
-    def on_key_press(self, key, modifiers):
-        if key == arcade.key.ESCAPE:
-            # Возвращаемся к MapView (или куда нужно)
-            self.window.show_view(MapView())
-        elif key == arcade.key.LEFT or key == arcade.key.A:
-            self.left_pressed = True
-        elif key == arcade.key.RIGHT or key == arcade.key.D:
-            self.right_pressed = True
-        elif key == arcade.key.UP or key == arcade.key.W:
-            self.up_pressed = True
-        elif key == arcade.key.DOWN or key == arcade.key.S:
-            self.down_pressed = True
-
-    def on_key_release(self, key, modifiers):
-        if key == arcade.key.LEFT or key == arcade.key.A:
-            self.left_pressed = False
-        elif key == arcade.key.RIGHT or key == arcade.key.D:
-            self.right_pressed = False
-        elif key == arcade.key.UP or key == arcade.key.W:
-            self.up_pressed = False
-        elif key == arcade.key.DOWN or key == arcade.key.S:
-            self.down_pressed = False
-
-    def on_resize(self, width, height):
-        """Обновление размеров для Hero при ресайзе"""
-        super().on_resize(width, height)
-        if self.player:
-            self.player.SCREEN_WIDTH = width
-            self.player.SCREEN_HEIGHT = height
-            # При изменении размера, возможно, потребуется пересчитать позицию пола
-            self.player.update_physics(0)  # Пересчет физики без перемещения
-
+        if key in (arcade.key.A, arcade.key.LEFT):
+            self.left = False
+        elif key in (arcade.key.D, arcade.key.RIGHT):
+            self.right = False
 
 
 class MapView(arcade.View):
     def __init__(self):
         super().__init__()
         self.manager = UIManager()
-        self.lvl_num = get_value()
-        # ... (загрузка текстур) ...
-        self.background_texture = arcade.load_texture("backgrounds/photo_2026-01-06_21-39-47.jpg")
-        self.texture_normal = arcade.load_texture("backgrounds/53a0aa6f-9669-45b4-b76a-3878fc8e7675.png")
-        self.texture_hovered = arcade.load_texture("backgrounds/129.png")
-        self.texture_block = arcade.load_texture("backgrounds/8c43b195-c8bf-47a0-99d2-d63be80d2c6f.png")
+        self.lvl_num = int(get_value())
+
+        self.bg = arcade.load_texture(str(BG_DIR / "photo_2026-01-06_21-39-47.jpg"))
+        self.lock_door = arcade.load_texture(str(BG_DIR / "lock_door.png"))
+        self.open_door = arcade.load_texture(str(BG_DIR / "open_door.png"))
+        self.point_door = arcade.load_texture(str(BG_DIR / "point_door.png"))
 
     def on_show_view(self):
         self.manager.enable()
-        self.setup_ui()
-
-    def setup_ui(self):
         self.manager.clear()
-        r = int(self.lvl_num) - 1
-        for i in range(10):
-            if i <= r:
-                door = UITextureButton(
-                    texture=self.texture_normal,
-                    texture_hovered=self.texture_hovered,
-                    width=130,
-                    height=230,
-                )
 
+        for i in range(10):
+            unlocked = i < self.lvl_num
+            texture = self.open_door if unlocked else self.lock_door
+
+            door = UITextureButton(
+                texture=texture,
+                texture_hovered=self.point_door if unlocked else None,
+                width=130,
+                height=230,
+            )
+
+            if unlocked:
                 @door.event("on_click")
-                def on_click_start(event):
-                    game_view = globals()["LVL_" + f"{self.lvl_num}"](
-                        lvl_to_load=i + 1)  # в зависимости от выбранного лвла запускает нужный класс лвла
-                    self.window.show_view(game_view)
-            else:
-                door = UITextureButton(
-                    texture=self.texture_block,
-                    width=130,
-                    height=230,
-                )
-            if i == 0:
-                anchor_layout = UIAnchorLayout()
-                anchor_layout.padding = [-100, 290, 300, -1020]
-                anchor_layout.add(child=door, anchor_x="center_x", anchor_y="center_y")
-                self.manager.add(anchor_layout)
-            elif i == 1:
-                anchor_layout = UIAnchorLayout()
-                anchor_layout.padding = [-45, 400, 200, -233]
-                anchor_layout.add(child=door, anchor_x="center_x", anchor_y="center_y")
-                self.manager.add(anchor_layout)
-            elif i == 2:
-                anchor_layout = UIAnchorLayout()
-                anchor_layout.padding = [-140, 400, 0, 420]
-                anchor_layout.add(child=door, anchor_x="center_x", anchor_y="center_y")
-                self.manager.add(anchor_layout)
-            elif i == 3:
-                anchor_layout = UIAnchorLayout()
-                anchor_layout.padding = [-110, 400, 0, 1165]
-                anchor_layout.add(child=door, anchor_x="center_x", anchor_y="center_y")
-                self.manager.add(anchor_layout)
-            elif i == 4:
-                anchor_layout = UIAnchorLayout()
-                anchor_layout.padding = [-510, 400, 0, 1978]
-                anchor_layout.add(child=door, anchor_x="center_x", anchor_y="center_y")
-                self.manager.add(anchor_layout)
-            elif i == 5:
-                anchor_layout = UIAnchorLayout()
-                anchor_layout.padding = [730, 400, 0, -1280]
-                anchor_layout.add(child=door, anchor_x="center_x", anchor_y="center_y")
-                self.manager.add(anchor_layout)
-            elif i == 6:
-                anchor_layout = UIAnchorLayout()
-                anchor_layout.padding = [330, 400, 0, -814]
-                anchor_layout.add(child=door, anchor_x="center_x", anchor_y="center_y")
-                self.manager.add(anchor_layout)
-            elif i == 7:
-                anchor_layout = UIAnchorLayout()
-                anchor_layout.padding = [550, 400, 0, -310]
-                anchor_layout.add(child=door, anchor_x="center_x", anchor_y="center_y")
-                self.manager.add(anchor_layout)
-            elif i == 8:
-                anchor_layout = UIAnchorLayout()
-                anchor_layout.padding = [700, 400, 0, 603]
-                anchor_layout.add(child=door, anchor_x="center_x", anchor_y="center_y")
-                self.manager.add(anchor_layout)
-            elif i == 9:
-                anchor_layout = UIAnchorLayout()
-                anchor_layout.padding = [400, 400, 0, 1370]
-                anchor_layout.add(child=door, anchor_x="center_x", anchor_y="center_y")
-                self.manager.add(anchor_layout)
+                def on_click(event, lvl=i + 1):
+                    self.window.show_view(
+                        BaseLevel(
+                            lvl,
+                            "photo_2026-01-06_21-39-45.jpg"
+                        )
+                    )
+
+            layout = UIAnchorLayout()
+            layout.add(door, anchor_x="center_x", anchor_y="center_y")
+            self.manager.add(layout)
 
     def on_draw(self):
         self.clear()
-        if self.background_texture:
-            arcade.draw_texture_rect(
-                texture=self.background_texture,
-                rect=arcade.rect.XYWH(
-                    self.window.width / 2,
-                    self.window.height / 2,
-                    self.window.width,
-                    self.window.height
-                )
+        arcade.draw_texture_rect(
+            self.bg,
+            arcade.rect.XYWH(
+                self.window.width / 2,
+                self.window.height / 2,
+                self.window.width,
+                self.window.height
             )
+        )
         self.manager.draw()
 
-    def on_key_press(self, key, modifiers):
-        if key == arcade.key.ESCAPE:
-            self.window.close()
 
-
+# ===================== START =====================
 class Start(arcade.View):
     def __init__(self):
         super().__init__()
         self.manager = UIManager()
-        self.background_texture = arcade.load_texture("backgrounds/photo_2026-01-07_21-47-51.jpg")
-        self.texture_normal = arcade.load_texture("backgrounds/125.png")
-        self.texture_hovered = arcade.load_texture("backgrounds/126.png")
+
+        self.bg = arcade.load_texture(
+            str(BG_DIR / "photo_2026-01-07_21-47-51.jpg")
+        )
+        self.btn = arcade.load_texture(str(BG_DIR / "start_button.png"))
+        self.btn_hover = arcade.load_texture(str(BG_DIR / "point_start_button.png"))
 
     def on_show_view(self):
         self.manager.enable()
-        self.setup_ui()
-
-    def setup_ui(self):
         self.manager.clear()
 
-        start_button = UITextureButton(
-            texture=self.texture_normal,
-            texture_hovered=self.texture_hovered,
+        button = UITextureButton(
+            texture=self.btn,
+            texture_hovered=self.btn_hover,
             width=350,
             height=105,
         )
 
-        @start_button.event("on_click")
-        def on_click_start(event):
-            map_view = MapView()
-            self.window.show_view(map_view)
+        @button.event("on_click")
+        def start_game(event):
+            self.window.show_view(MapView())
 
-        anchor_layout = UIAnchorLayout()
-        anchor_layout.padding = [390, 400, 0, 400]
-        anchor_layout.add(child=start_button, anchor_x="center_x", anchor_y="center_y")
-        self.manager.add(anchor_layout)
-
-    def on_hide_view(self):
-        self.manager.disable()
+        layout = UIAnchorLayout()
+        layout.add(button, anchor_x="center_x", anchor_y="center_y")
+        self.manager.add(layout)
 
     def on_draw(self):
         self.clear()
-        if self.background_texture:
-            arcade.draw_texture_rect(
-                texture=self.background_texture,
-                rect=arcade.rect.XYWH(
-                    self.window.width / 2,
-                    self.window.height / 2,
-                    self.window.width,
-                    self.window.height
-                )
+        arcade.draw_texture_rect(
+            self.bg,
+            arcade.rect.XYWH(
+                self.window.width / 2,
+                self.window.height / 2,
+                self.window.width,
+                self.window.height
             )
+        )
         self.manager.draw()
 
-    def on_key_press(self, key, modifiers):
-        if key == arcade.key.ESCAPE:
-            self.window.close()
 
-
+# ===================== MAIN =====================
 def main():
-    window = arcade.Window(title="Game Example", resizable=True, fullscreen=True)
-    menu_view = Start()
-    window.show_view(menu_view)
-
+    window = arcade.Window(title="Game", fullscreen=True)
+    window.show_view(Start())
     arcade.run()
 
 
