@@ -29,7 +29,7 @@ class Hero(arcade.Sprite):
         self.MARGIN_TOP_PERCENT = 0.9  # Потолок на 90% высоты
 
         # ФИЗИКА
-        self.speed = 400  # Увеличил
+        self.speed = 200  # Увеличил
         self.jump_speed = 28
         self.gravity = 2
         self.max_fall_speed = -15
