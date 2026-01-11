@@ -311,118 +311,205 @@ class Hero(arcade.Sprite):
 class BaseLevel(arcade.View):
     def __init__(self, level_number: int, background_name: str):
         super().__init__()
-        self.level_number = level_number
-        self.background = arcade.load_texture(
-            str(BG_DIR / background_name)
-        )
+        self.lvl_num = level_number
+        print(str(BG_DIR / background_name))
 
-        self.left = False
-        self.right = False
-        self.player = None
+        # Загружаем фон с заглушкой
+        try:
+            self.background_texture = arcade.load_texture(
+                str(BG_DIR / background_name)
+            )
+        except:
+            self.background_texture = None
+
+        # Флаги нажатых клавиш
+        self.left_pressed = False
+        self.right_pressed = False
+        self.up_pressed = False
+        self.down_pressed = False
+
+        # SpriteLists
         self.player_list = arcade.SpriteList()
+        self.wall_list = arcade.SpriteList()
+        self.bullet_list = arcade.SpriteList()
+
+        self.player = None
+
+        self.manager = UIManager()
+        self.manager.enable()
+
+    # ⚠️ setup сохранён, но НЕ обязателен
+    def setup(self):
+        self.player_list = arcade.SpriteList()
+        self.wall_list = arcade.SpriteList()
+        self.bullet_list = arcade.SpriteList()
 
     def on_show_view(self):
+        self.setup_game_elements()
+
+    def setup_game_elements(self):
         self.player = Hero(self.window.width, self.window.height)
         self.player_list.append(self.player)
 
     def on_draw(self):
         self.clear()
-        arcade.draw_texture_rect(
-            self.background,
-            arcade.rect.XYWH(
-                self.window.width / 2,
-                self.window.height / 2,
-                self.window.width,
-                self.window.height
+
+        # Фон
+        if self.background_texture:
+            arcade.draw_texture_rect(
+                texture=self.background_texture,
+                rect=arcade.rect.XYWH(
+                    self.window.width / 2,
+                    self.window.height / 2,
+                    self.window.width,
+                    self.window.height
+                )
             )
-        )
+
+        # Объекты
+        self.wall_list.draw()
         self.player_list.draw()
+        self.bullet_list.draw()
+
+        self.manager.draw()
 
     def on_update(self, delta_time):
-        if self.left:
-            self.player.center_x -= self.player.speed * delta_time
-            self.player.facing_right = False
-        if self.right:
-            self.player.center_x += self.player.speed * delta_time
-            self.player.facing_right = True
-        self.player_list.update(delta_time)
+        if self.player:
+            self.player.update_movement(
+                delta_time,
+                self.left_pressed,
+                self.right_pressed,
+                self.up_pressed,
+                self.down_pressed
+            )
+            self.player_list.update()
 
     def on_key_press(self, key, modifiers):
-        if key in (arcade.key.A, arcade.key.LEFT):
-            self.left = True
-        elif key in (arcade.key.D, arcade.key.RIGHT):
-            self.right = True
-        elif key == arcade.key.ESCAPE:
+        if key == arcade.key.ESCAPE:
             self.window.show_view(MapView())
 
+        elif key in (arcade.key.LEFT, arcade.key.A):
+            self.left_pressed = True
+        elif key in (arcade.key.RIGHT, arcade.key.D):
+            self.right_pressed = True
+        elif key in (arcade.key.UP, arcade.key.W):
+            self.up_pressed = True
+        elif key in (arcade.key.DOWN, arcade.key.S):
+            self.down_pressed = True
+
     def on_key_release(self, key, modifiers):
-        if key in (arcade.key.A, arcade.key.LEFT):
-            self.left = False
-        elif key in (arcade.key.D, arcade.key.RIGHT):
-            self.right = False
+        if key in (arcade.key.LEFT, arcade.key.A):
+            self.left_pressed = False
+        elif key in (arcade.key.RIGHT, arcade.key.D):
+            self.right_pressed = False
+        elif key in (arcade.key.UP, arcade.key.W):
+            self.up_pressed = False
+        elif key in (arcade.key.DOWN, arcade.key.S):
+            self.down_pressed = False
+
+    def on_resize(self, width, height):
+        super().on_resize(width, height)
+        if self.player:
+            self.player.SCREEN_WIDTH = width
+            self.player.SCREEN_HEIGHT = height
+            self.player.update_physics(0)
+
 
 
 class MapView(arcade.View):
     def __init__(self):
         super().__init__()
         self.manager = UIManager()
-        self.lvl_num = int(get_value())
+        self.lvl_num = get_value()
 
-        self.bg = arcade.load_texture(str(BG_DIR / "photo_2026-01-06_21-39-47.jpg"))
-        self.lock_door = arcade.load_texture(str(BG_DIR / "lock_door.png"))
-        self.open_door = arcade.load_texture(str(BG_DIR / "open_door.png"))
-        self.point_door = arcade.load_texture(str(BG_DIR / "point_door.png"))
+        self.background_texture = arcade.load_texture(str(BG_DIR / "map.jpg"))
+        self.texture_normal = arcade.load_texture(str(BG_DIR / "open_door.png"))
+        self.texture_hovered = arcade.load_texture(str(BG_DIR / "point_door.png"))
+        self.texture_block = arcade.load_texture(str(BG_DIR / "lock_door.png"))
 
     def on_show_view(self):
         self.manager.enable()
+        self.setup_ui()
+
+    def setup_ui(self):
         self.manager.clear()
+        r = int(self.lvl_num) - 1
+
+        paddings = [
+            [-100, 290, 300, -1020],
+            [-45,  400, 200, -233],
+            [-140, 400,   0,  420],
+            [-110, 400,   0, 1165],
+            [-510, 400,   0, 1978],
+            [730,  400,   0, -1280],
+            [330,  400,   0, -814],
+            [550,  400,   0, -310],
+            [700,  400,   0,  603],
+            [400,  400,   0, 1370]
+        ]
 
         for i in range(10):
-            unlocked = i < self.lvl_num
-            texture = self.open_door if unlocked else self.lock_door
+            if i <= r:
+                door = UITextureButton(
+                    texture=self.texture_normal,
+                    texture_hovered=self.texture_hovered,
+                    width=130,
+                    height=230,
+                )
 
-            door = UITextureButton(
-                texture=texture,
-                texture_hovered=self.point_door if unlocked else None,
-                width=130,
-                height=230,
-            )
+                door.level_index = i + 1
 
-            if unlocked:
                 @door.event("on_click")
-                def on_click(event, lvl=i + 1):
-                    self.window.show_view(
-                        BaseLevel(
-                            lvl,
-                            "photo_2026-01-06_21-39-45.jpg"
-                        )
+                def on_click_start(event, button=door):
+                    game_view = BaseLevel(
+                        level_number=button.level_index,
+                        background_name=f"level_{button.level_index}.png"
                     )
+                    self.window.show_view(game_view)
+            else:
+                door = UITextureButton(
+                    texture=self.texture_block,
+                    width=130,
+                    height=230,
+                )
 
-            layout = UIAnchorLayout()
-            layout.add(door, anchor_x="center_x", anchor_y="center_y")
-            self.manager.add(layout)
+            anchor_layout = UIAnchorLayout()
+            anchor_layout.padding = paddings[i]
+            anchor_layout.add(
+                child=door,
+                anchor_x="center_x",
+                anchor_y="center_y"
+            )
+            self.manager.add(anchor_layout)
 
     def on_draw(self):
         self.clear()
-        arcade.draw_texture_rect(
-            self.bg,
-            arcade.rect.XYWH(
-                self.window.width / 2,
-                self.window.height / 2,
-                self.window.width,
-                self.window.height
+        if self.background_texture:
+            arcade.draw_texture_rect(
+                texture=self.background_texture,
+                rect=arcade.rect.XYWH(
+                    self.window.width / 2,
+                    self.window.height / 2,
+                    self.window.width,
+                    self.window.height
+                )
             )
-        )
         self.manager.draw()
+
+    def on_key_press(self, key, modifiers):
+        if key == arcade.key.ESCAPE:
+            self.window.close()
+
+
 
 
 class Start(arcade.View):
     def __init__(self):
         super().__init__()
         self.manager = UIManager()
-        self.background_texture = arcade.load_texture(str(BG_DIR / "backgrounds" / "start.jpg"))
-        self.texture_normal = arcade.load_texture(str(BG_DIR / "backgrounds" / "start.jpg"))
-        self.texture_hovered = arcade.load_texture(str(BG_DIR / "backgrounds" / "start.jpg"))
+        self.background_texture = arcade.load_texture(str(BG_DIR / "start.jpg"))
+        self.texture_normal = arcade.load_texture(str(BG_DIR / "start_button.png"))
+        self.texture_hovered = arcade.load_texture(str(BG_DIR / "point_start_button.png"))
 
     def on_show_view(self):
         self.manager.enable()
@@ -470,7 +557,6 @@ class Start(arcade.View):
             self.window.close()
 
 
-# ===================== MAIN =====================
 def main():
     window = arcade.Window(title="Game", fullscreen=True)
     window.show_view(Start())
